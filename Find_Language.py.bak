@@ -1,0 +1,72 @@
+'''
+Sources: The code implementation done in this notebook is referenced from a blog from the below web address.
+https://medium.com/oracledevs/determine-the-language-of-a-document-from-the-letter-frequency-using-levenshtein-distance-c230db714fce
+        
+The implementation is followed from 
+
+https://github.com/lucasjellema/language-determination-analytics/blob/master/Letter%20Frequency%20Analysis%20-%20Determine%20Language%20of%20Document%20based%20on%20Letter%20Frequency.ipynb
+    
+The implementation in the above link is based on the pandas and the implementation of levenshtein distance function.
+Where as in my implementation I have used Pandas,PySpark,SparkSQL and levenshtein package to calculate the levenshtein distance for the given string.
+The code has been modified to a file to pass the name of file as input to the detect_language function which contains 
+the code to determine the language of text for a giventext in the file.
+'''
+
+
+import findspark
+findspark.init()
+from pyspark.sql import *
+import pandas as pd
+import Levenshtein as lvn
+
+spark = SparkSession.builder.appName('language_Detection').getOrCreate()
+df_letter_sequences = spark.read.csv('ordered-letter-sequences.csv',header='true')
+pd_df = df_letter_sequences.toPandas()
+
+def detect_language(textfile):
+    with open(textfile,encoding='utf8') as readData:
+        data = readData.readlines()
+    
+    df_all_letters = spark.read.csv('letter-frequencies.csv',header='true')
+    pd_df_all_letters = df_all_letters.toPandas()
+    all_letters = ''.join(pd_df_all_letters['Letter'])
+    print(all_letters)
+    
+    alphabet_dictionary = {}
+    for alphabet in all_letters:
+        alphabet_dictionary[alphabet] = 0
+    count = 0
+    for p in data:
+        for k in p:
+            k = k.lower()
+            if k in all_letters:
+                count = count+1
+                if k in alphabet_dictionary: alphabet_dictionary[k] += 1
+                else: alphabet_dictionary[k] = 0
+
+    for j in alphabet_dictionary:
+        alphabet_dictionary[j] = alphabet_dictionary[j]/count
+    
+    lang_text_df = pd.DataFrame.from_dict(alphabet_dictionary,orient='index',columns=['frequency'])
+    lang_text_df['alphabet'] = lang_text_df.index
+    sort_letter_df = spark.createDataFrame(lang_text_df).createOrReplaceTempView('tmp')
+    result_df = spark.sql("select alphabet,frequency from tmp order by frequency desc")
+    result_pd_df = result_df.toPandas()
+    final_text_seq = ''.join(result_pd_df['alphabet'])
+    best_score = 999
+    for i,j in pd_df.iterrows():
+        #print(i,j)
+        ld = lvn.distance(j['ordered_letters'],final_text_seq)
+        #print(j['language'],': ',ld)
+        if ld == best_score:
+            best_matching_language = best_matching_language + ', '+j['language']
+        if ld < best_score:
+            best_score= ld
+            best_matching_language = j['language']
+    print("We have a winner: ",best_matching_language)
+	
+	
+language_files = {1:'spanish_sam.txt',2:'Swedish_Sample.txt',3:'English_Sample.txt'}
+
+print(" Choose one of the below options to send as input file:\n 1. Spanish \n 2. Swedish \n 3. English ")
+detect_language(language_files[int(input("Enter one of the number: "))])
